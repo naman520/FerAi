@@ -23,16 +23,41 @@
         #debug-info { margin-top: 10px; font-style: italic; }
         .emotion-feedback { margin-top: 10px; }
         .emotion-feedback button { margin: 0 5px; }
+        .error-message {
+            color: red;
+            padding: 10px;
+            margin: 10px 0;
+            background-color: #ffebee;
+            border-radius: 4px;
+            display: none;
+        }
+        .status-indicator {
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            padding: 5px 10px;
+            border-radius: 15px;
+            font-size: 12px;
+        }
+        .status-connected {
+            background-color: #4caf50;
+            color: white;
+        }
+        .status-disconnected {
+            background-color: #f44336;
+            color: white;
+        }
     </style>
 </head>
 <body>
     <h1>Enhanced Real-time Emotion Detection</h1>
+    <div id="status" class="status-indicator"></div>
+    <div id="error-message" class="error-message"></div>
     <div id="videoContainer">
         <video id="video" width="640" height="480" autoplay></video>
         <div id="emotion-overlay"></div>
     </div>
     <canvas id="emotion-chart"></canvas>
-    <div id="emotion-chart"></div>
     <div class="emotion-feedback">
         <p>Is the detected emotion correct?</p>
         <button onclick="provideFeedback(true)">Yes</button>
@@ -41,20 +66,54 @@
     <div id="debug-info"></div>
 
     <script>
+    // Replace with your Render backend URL
+    const API_URL = 'https://ferai.onrender.com/';
+    let isConnected = false;
+    let retryCount = 0;
+    const MAX_RETRIES = 3;
+
     const video = document.getElementById('video');
     const overlay = document.getElementById('emotion-overlay');
     const debugInfo = document.getElementById('debug-info');
+    const errorMessage = document.getElementById('error-message');
+    const statusIndicator = document.getElementById('status');
     let chart;
+
+    // Check backend connectivity
+    async function checkBackendConnection() {
+        try {
+            const response = await fetch(`${API_URL}/health`);
+            if (response.ok) {
+                isConnected = true;
+                statusIndicator.textContent = 'Connected';
+                statusIndicator.className = 'status-indicator status-connected';
+                errorMessage.style.display = 'none';
+                retryCount = 0;
+            } else {
+                throw new Error('Backend health check failed');
+            }
+        } catch (error) {
+            isConnected = false;
+            statusIndicator.textContent = 'Disconnected';
+            statusIndicator.className = 'status-indicator status-disconnected';
+            showError('Cannot connect to the server. Retrying...');
+        }
+    }
+
+    function showError(message) {
+        errorMessage.textContent = message;
+        errorMessage.style.display = 'block';
+    }
 
     navigator.mediaDevices.getUserMedia({ video: true })
         .then(stream => {
             video.srcObject = stream;
         })
-        .catch(err => console.error("Error accessing the camera", err));
+        .catch(err => showError("Error accessing the camera: " + err.message));
 
     function initChart() {
-    const ctx = document.getElementById('emotion-chart').getContext('2d');
-    chart = new Chart(ctx, {
+        const ctx = document.getElementById('emotion-chart').getContext('2d');
+        chart = new Chart(ctx, {
             type: 'bar',
             data: {
                 labels: ['Angry', 'Disgust', 'Fear', 'Happy', 'Sad', 'Surprise', 'Neutral'],
@@ -84,33 +143,50 @@
         });
     }
 
-    function detectEmotion() {
+    async function detectEmotion() {
+        if (!isConnected) {
+            await checkBackendConnection();
+            if (!isConnected) {
+                if (retryCount >= MAX_RETRIES) {
+                    showError('Connection failed. Please refresh the page.');
+                    return;
+                }
+                retryCount++;
+                return;
+            }
+        }
+
         const startTime = performance.now();
         const canvas = document.createElement('canvas');
         canvas.width = 48;
         canvas.height = 48;
         canvas.getContext('2d').drawImage(video, 0, 0, 48, 48);
         
-        canvas.toBlob(blob => {
+        try {
+            const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg'));
             const formData = new FormData();
             formData.append('image', blob, 'capture.jpg');
 
-            fetch('http://127.0.0.1:5000/predict', {
+            const response = await fetch(`${API_URL}/predict`, {
                 method: 'POST',
                 body: formData
-            })
-            .then(response => response.json())
-            .then(data => {
-                updateOverlay(data);
-                updateChart(data);
-                const endTime = performance.now();
-                updateDebugInfo(endTime - startTime);
-            })
-            .catch(error => {
-                console.error('Error:', error);
-                debugInfo.textContent = `Error: ${error.message}`;
             });
-        }, 'image/jpeg');
+
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+
+            const data = await response.json();
+            updateOverlay(data);
+            updateChart(data);
+            const endTime = performance.now();
+            updateDebugInfo(endTime - startTime);
+            errorMessage.style.display = 'none';
+        } catch (error) {
+            console.error('Error:', error);
+            showError(`Error detecting emotion: ${error.message}`);
+            isConnected = false;
+        }
     }
 
     function updateOverlay(data) {
@@ -141,15 +217,34 @@
         return colors[emotion] || '#cccccc';
     }
 
-    function provideFeedback(isCorrect) {
-        // Here you would typically send this feedback to your server
-        console.log(`User feedback: Emotion detection ${isCorrect ? 'correct' : 'incorrect'}`);
-        alert(`Thank you for your feedback! ${isCorrect ? 'Great!' : 'We\'ll work on improving.'}`);
+    async function provideFeedback(isCorrect) {
+        try {
+            const response = await fetch(`${API_URL}/feedback`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ isCorrect })
+            });
+            
+            if (response.ok) {
+                alert(`Thank you for your feedback! ${isCorrect ? 'Great!' : 'We\'ll work on improving.'}`);
+            } else {
+                throw new Error('Failed to send feedback');
+            }
+        } catch (error) {
+            console.error('Error sending feedback:', error);
+            showError('Failed to send feedback. Please try again.');
+        }
     }
 
     video.addEventListener('loadedmetadata', () => {
         initChart();
-        setInterval(detectEmotion, 1000); // Detect emotion every second
+        checkBackendConnection().then(() => {
+            if (isConnected) {
+                setInterval(detectEmotion, 1000);
+            }
+        });
     });
     </script>
 </body>
