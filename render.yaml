@@ -1,7 +1,15 @@
-build:
-  steps:
-    - pip install -r requirements.txt
-
-run:
-  steps:
-    - gunicorn model:app
+services:
+  - type: web
+    name: flask-fer-app
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app --timeout 120
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.9.18  # TensorFlow works best with Python 3.9
+    resources:
+      cpu: 1x
+      memory: 2048
+    buildConfig:
+      maxDuration: 30
+    healthCheckPath: /
