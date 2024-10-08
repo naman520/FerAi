@@ -1,6 +1,6 @@
 Flask==2.0.1
 flask-cors==4.0.0
-numpy==1.21.6  # Latest compatible with TensorFlow
-tensorflow-cpu==2.12.0  # Updated version of TensorFlow CPU version
+numpy==1.21.0
+tensorflow-cpu==2.9.0  # Using CPU version instead of full TensorFlow
 Pillow==9.0.0
 gunicorn==20.1.0
